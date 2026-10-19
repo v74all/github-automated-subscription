@@ -1,0 +1,35 @@
+name: Subscription Auto-Updater
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  health-check-and-distribute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Audit Node Health
+        run: |
+          python3 health_checker.py -i nodes_template.json -o active_nodes.json -b sub_base64.txt
+      - name: Deploy Updated Subscription
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          SUB_KV_ID: ${{ secrets.SUB_KV_ID }}
+        run: |
+          if [ -n "$CF_API_TOKEN" ] && [ -n "$CF_ACCOUNT_ID" ] && [ -n "$SUB_KV_ID" ]; then
+            curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${SUB_KV_ID}/values/ACTIVE_NODES" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data-binary "@active_nodes.json"
+          fi
+      - name: Commit Subscription Artifacts
+        run: |
+          git config user.name "aiden azad"
+          git config user.email "aiden@azad.dev"
+          git add active_nodes.json sub_base64.txt
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(sub): prune unhealthy nodes and update subscription [skip ci]" && git push)
